@@ -1,0 +1,15 @@
+# FITS data files
+*.fits
+*.fit
+*.fts
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary files
+*.tmp
+*.log
