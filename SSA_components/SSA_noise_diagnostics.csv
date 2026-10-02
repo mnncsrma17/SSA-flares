@@ -1,0 +1,20 @@
+Parameter,Value
+SSA component,SSA-6: Noise / Residual  (components 48–984)
+N samples,8425
+Mean,-3.826077157224403e-06
+Standard deviation,0.018443262617720012
+Sample skewness,0.35077747182208363
+Excess kurtosis,23.315938913752195
+Spectral decay beta,2.0237634523854324
+Spectral R squared,0.8288906059783684
+Spectral noise type,Red / Brownian-like noise
+Quantile ratio v_alpha,4.094507944382965
+Quantile alpha,1.25773705026616
+ECF alpha,0.9344936785529677
+ECF alpha (unclipped),0.9344936785529677
+ECF alpha R2,0.9384609505274407
+Alpha method used,ECF regression (R²=0.938)
+Final alpha estimate,0.9344936785529677
+Stability interpretation,Very heavy-tailed
+Quantile skewness,0.03417234930574723
+Skewness interpretation,Approximately symmetric
