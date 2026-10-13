@@ -1,3 +1,4 @@
+from scipy.stats import levy_stable
 from pathlib import Path
 import os
 from collections import defaultdict
@@ -7,7 +8,7 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 from scipy import signal
 from scipy.signal import butter, filtfilt, find_peaks
-from scipy.stats import gaussian_kde, norm, skew, kurtosis, pearsonr, spearmanr
+from scipy.stats import gaussian_kde, norm, skew, kurtosis, pearsonr, spearmanr, levy_stable
 
 plt.rcParams.update({
     "font.size": 14,
@@ -543,6 +544,7 @@ for gname, gidxs in groups:
     print(f"  {gname}")
     print(f"    Energy fraction: {ef:.6f}")
 
+
 # 24A. IDENTIFY NOISE / RESIDUAL GROUP
 
 noise_group_index = None
@@ -675,18 +677,24 @@ elif spectral_beta < 3.5:
 else:
     spectral_type = "Very steep power-law noise"
 
-# 24G. STABILITY ALPHA — ECF REGRESSION + FAMA–ROLL CROSS-CHECK
+# 24G. STABILITY ALPHA — ECF REGRESSION + CROSS-CHECK
 
 print("Running stability alpha estimation (ECF method)...")
 
+def effective_n(x, max_lag=2000):
+    """n_eff = n / integrated autocorrelation time (truncated at first zero crossing)."""
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    x = x - np.mean(x)
+    acf = signal.correlate(x, x, mode="full", method="fft")[len(x) - 1:]
+    acf = acf[:max_lag + 1] / acf[0]
+    cut = int(np.argmax(acf <= 0)) or len(acf)
+    tau_int = 1.0 + 2.0 * np.sum(acf[1:cut])
+    return max(len(x) / tau_int, 10.0)
 
-def estimate_alpha_ecf(x, n_t=300, t_lo=0.05, t_hi=5.0,
-                       floor_sigma=5.0, ceil_mod=0.95):
-    """
-    Returns (alpha_clipped, r2, alpha_raw, n_points_used, t_min, t_max).
-    alpha_raw is the unclipped regression slope (diagnostic);
-    alpha_clipped is bounded to the stable range [0.1, 2.0].
-    """
+def estimate_alpha_ecf(x, n_t=60, t_lo=0.05, t_hi=5.0,
+                       floor_sigma=5.0, ceil_mod=0.95, n_eff= None):
+
     x = np.asarray(x, dtype=np.float64)
     x = x[np.isfinite(x)]
     n = len(x)
@@ -704,11 +712,11 @@ def estimate_alpha_ecf(x, n_t=300, t_lo=0.05, t_hi=5.0,
     z = x / scale
 
     # Empirical characteristic-function modulus on a dimensionless t-grid.
-    t_grid = np.linspace(t_lo, t_hi, n_t)
+    t_grid = np.geomspace(t_lo, t_hi, n_t)
     ecf_mod = np.abs(np.exp(1j * np.outer(t_grid, z)).mean(axis=1))
 
     # Keep the informative region only.
-    noise_floor = floor_sigma / np.sqrt(n)
+    noise_floor = floor_sigma / np.sqrt((n_eff if n_eff else n))
     use = (ecf_mod > noise_floor) & (ecf_mod < ceil_mod)
     if np.sum(use) < 15:
         return nan_out
@@ -732,56 +740,59 @@ def estimate_alpha_ecf(x, n_t=300, t_lo=0.05, t_hi=5.0,
     return alpha_hat, r2, alpha_raw, int(np.sum(use)), float(t_v[0]), float(t_v[-1])
 
 
+n_eff = effective_n(noise_component)
+print(f"  Effective sample size ≈ {n_eff:.0f} of {len(noise_component)}")
+
 (alpha_ecf, alpha_ecf_r2, alpha_ecf_raw,
- ecf_n_used, ecf_t_min, ecf_t_max) = estimate_alpha_ecf(noise_component)
+ ecf_n_used, ecf_t_min, ecf_t_max) = estimate_alpha_ecf(noise_component, n_eff=n_eff)
 
 print(f"  ECF α estimate : {alpha_ecf:.4f}  (R² = {alpha_ecf_r2:.4f})")
 print(f"  ECF raw slope  : {alpha_ecf_raw:.4f}  (unclipped)")
 print(f"  ECF fit region : {ecf_n_used} t-points in [{ecf_t_min:.3f}, {ecf_t_max:.3f}] "
       f"(standardised units)")
+print("t_hi   alpha_raw   R²     n_pts")
+for th in (1.0, 1.5, 2.0, 3.0, 4.0, 5.0):
+    _, r2_s, raw_s, npts_s, _, _ = estimate_alpha_ecf(noise_component, t_hi=th, n_eff=n_eff)
+    print(f"{th:4.1f}   {raw_s:8.3f}   {r2_s:6.3f}   {npts_s}")
+# Quantile-based cross-check
 
-# Quantile-based cross-check (Fama–Roll 1971)
 
+def build_mcculloch_table(alphas=np.arange(2.0, 0.55, -0.05)):
+
+    va = []
+    for a in alphas:
+        q = levy_stable(a, 0.0).ppf([0.05, 0.25, 0.75, 0.95])
+        va.append((q[3] - q[0]) / (q[2] - q[1]))
+    return np.array(va), np.array(alphas)   # va ascending, alpha descending
+
+
+VA_TABLE, ALPHA_TABLE = build_mcculloch_table()
+# sanity: VA at alpha=2 -> 2.4388, at alpha=1 -> 6.3138
 q05, q25, q50, q75, q95 = np.percentile(noise_component, [5, 25, 50, 75, 95])
 iqr = q75 - q25
 spread90 = q95 - q05
-
-v_alpha = spread90 / iqr if iqr > 0 else np.nan
-
-# Table is ascending in v_alpha (required by np.interp); alpha decreases.
-VA_TABLE = np.array([2.4388, 2.5120, 2.6080, 2.7369, 2.9115,
-                     3.1480, 3.4602, 3.8695, 4.4019, 5.0191,
-                     5.6812, 6.2095, 6.6273, 6.9256, 7.1013])
-ALPHA_TABLE = np.array([2.0,    1.9,    1.8,    1.7,    1.6,
-                        1.5,    1.4,    1.3,    1.2,    1.1,
-                        1.0,    0.9,    0.8,    0.7,    0.6])
-
-if np.isfinite(v_alpha):
-    v_clamped = float(np.clip(v_alpha, VA_TABLE[0], VA_TABLE[-1]))
-    alpha_quantile = float(np.interp(v_clamped, VA_TABLE, ALPHA_TABLE))
+nu_alpha = spread90 / iqr if iqr > 0 else np.nan
+if np.isfinite(nu_alpha):
+    alpha_mcculloch = float(np.interp(nu_alpha, VA_TABLE, ALPHA_TABLE))
+    quantile_out_of_range = not (VA_TABLE[0] <= nu_alpha <= VA_TABLE[-1])
 else:
-    alpha_quantile = np.nan
+    alpha_mcculloch, quantile_out_of_range = np.nan, True
 
-print(f"  Quantile ratio : v_α = {v_alpha:.4f}")
-print(f"  Quantile α     : {alpha_quantile:.4f}")
+alpha_gap = abs(alpha_ecf - alpha_mcculloch)
+agree = alpha_gap < 0.3   # report this, don't hide it
+quantile_skewness = (q95 + q05 - 2*q50) / spread90 if spread90 > 0 else np.nan
 
-# Best estimate: prefer ECF if R² is reliable
-if np.isfinite(alpha_ecf) and np.isfinite(alpha_ecf_r2) and alpha_ecf_r2 > 0.7:
-    alpha_estimate = alpha_ecf
-    alpha_method_used = f"ECF regression (R²={alpha_ecf_r2:.3f})"
-elif np.isfinite(alpha_quantile):
-    alpha_estimate = alpha_quantile
-    alpha_method_used = "Fama–Roll quantile ratio"
-else:
-    alpha_estimate = np.nan
-    alpha_method_used = "Not estimable"
+# Primary estimate = ECF; McCulloch is the check
 
-print(f"  ─ Using: {alpha_method_used}")
-print(f"  ─ Final α = {alpha_estimate:.4f}")
+alpha_estimate = alpha_ecf
+alpha_method_used = "ECF regression (primary); McCulloch quantile check"
 
-# Quantile-based asymmetry
-stable_skewness = (q95 + q05 - 2.0 * q50) / \
-    spread90 if spread90 > 0 else np.nan
+print(f"  Quantile ratio : ν_α = {nu_alpha:.4f}"
+      f"{'  [OUT OF TABLE RANGE]' if quantile_out_of_range else ''}")
+print(f"  McCulloch α    : {alpha_mcculloch:.4f}")
+print(f"  |ECF − McC| gap: {alpha_gap:.4f}  → "
+      f"{'agree' if agree else 'DISAGREE (stable model questionable)'}")
+print(f"  ─ Final α (ECF) = {alpha_estimate:.4f}")
 
 # 24H. INTERPRETATIONS
 
@@ -796,11 +807,18 @@ elif alpha_estimate >= 1.0:
 else:
     stability_interpretation = "Very heavy-tailed"
 
-if not np.isfinite(stable_skewness):
+agreement_interpretation = (
+    "ECF and McCulloch agree" if agree
+    else "ECF and McCulloch DISAGREE; stable-law model questionable"
+)
+if quantile_out_of_range:
+    agreement_interpretation += " (ν_α outside table range)"
+
+if not np.isfinite(quantile_skewness):
     skew_interpretation = "Unable to estimate"
-elif stable_skewness > 0.1:
+elif quantile_skewness > 0.1:
     skew_interpretation = "Right-skewed"
-elif stable_skewness < -0.1:
+elif quantile_skewness < -0.1:
     skew_interpretation = "Left-skewed"
 else:
     skew_interpretation = "Approximately symmetric"
@@ -821,14 +839,20 @@ print(f"Spectral decay β      : {spectral_beta:.5f}")
 print(f"Log-log R²            : {spectral_r2:.5f}")
 print(f"Classification        : {spectral_type}")
 print("\n--- STABILITY / SKEWNESS ---")
-print(f"Quantile ratio v_α    : {v_alpha:.5f}")
-print(f"Quantile α            : {alpha_quantile:.5f}")
-print(f"ECF α                 : {alpha_ecf:.5f}  (R² = {alpha_ecf_r2:.4f})")
-print(f"ECF raw slope         : {alpha_ecf_raw:.5f}")
+print(f"ECF α (primary)       : {alpha_ecf:.5f}  (R² = {alpha_ecf_r2:.4f})")
+print(f"ECF raw slope         : {alpha_ecf_raw:.5f}  (unclipped)")
+print(
+    f"ECF fit region        : {ecf_n_used} pts in [{ecf_t_min:.3f}, {ecf_t_max:.3f}]")
+print(
+    f"Quantile ratio ν_α    : {nu_alpha:.5f}  (out of range: {quantile_out_of_range})")
+print(f"McCulloch α (check)   : {alpha_mcculloch:.5f}")
+print(f"|ECF − McCulloch|     : {alpha_gap:.5f}")
+print(f"Estimators agree      : {agree}")
 print(f"Method used           : {alpha_method_used}")
 print(f"Final α estimate      : {alpha_estimate:.5f}")
 print(f"Stability interpretation: {stability_interpretation}")
-print(f"Quantile skewness     : {stable_skewness:.5f}")
+print(f"Agreement             : {agreement_interpretation}")
+print(f"Quantile skewness     : {quantile_skewness:.5f}")
 print(f"Skewness interpretation: {skew_interpretation}")
 
 # 24J. DIAGNOSTIC FIGURE
@@ -953,15 +977,20 @@ summary_data = {
     "Spectral beta": spectral_beta,
     "Spectral R2": spectral_r2,
     "Noise type": spectral_type,
-    "Quantile v_alpha": v_alpha,
-    "Quantile alpha": alpha_quantile,
     "ECF alpha": alpha_ecf,
-    "ECF alpha (unclipped)": alpha_ecf_raw,
     "ECF alpha R2": alpha_ecf_r2,
+    "ECF raw slope": alpha_ecf_raw,
+    "ECF points used": ecf_n_used,
+    "Quantile nu_alpha": nu_alpha,
+    "McCulloch alpha": alpha_mcculloch,
+    "Quantile out of range": quantile_out_of_range,
+    "ECF-McCulloch gap": alpha_gap,
+    "Estimators agree": agree,
     "Alpha method": alpha_method_used,
     "Final alpha": alpha_estimate,
     "Tail interpretation": stability_interpretation,
-    "Quantile skewness": stable_skewness,
+    "Agreement interpretation": agreement_interpretation,
+    "Quantile skewness": quantile_skewness,
     "Symmetry interpretation": skew_interpretation
 }
 
@@ -985,14 +1014,18 @@ noise_results = pd.DataFrame({
         "Spectral decay beta",
         "Spectral R squared",
         "Spectral noise type",
-        "Quantile ratio v_alpha",
-        "Quantile alpha",
+        "Quantile ratio nu_alpha",
+        "McCulloch alpha",
+        "Quantile out of range",
+        "ECF-McCulloch gap",
+        "Estimators agree",
         "ECF alpha",
-        "ECF alpha (unclipped)",
         "ECF alpha R2",
+        "ECF raw slope",
         "Alpha method used",
         "Final alpha estimate",
         "Stability interpretation",
+        "Agreement interpretation",
         "Quantile skewness",
         "Skewness interpretation",
     ],
@@ -1006,15 +1039,19 @@ noise_results = pd.DataFrame({
         spectral_beta,
         spectral_r2,
         spectral_type,
-        v_alpha,
-        alpha_quantile,
+        nu_alpha,
+        alpha_mcculloch,
+        quantile_out_of_range,
+        alpha_gap,
+        agree,
         alpha_ecf,
-        alpha_ecf_raw,
         alpha_ecf_r2,
+        alpha_ecf_raw,
         alpha_method_used,
         alpha_estimate,
         stability_interpretation,
-        stable_skewness,
+        agreement_interpretation,
+        quantile_skewness,
         skew_interpretation,
     ]
 })
