@@ -8,13 +8,17 @@ Excess kurtosis,23.315938913752195
 Spectral decay beta,2.0237634523854324
 Spectral R squared,0.8288906059783684
 Spectral noise type,Red / Brownian-like noise
-Quantile ratio v_alpha,4.094507944382965
-Quantile alpha,1.25773705026616
-ECF alpha,0.9344936785529677
-ECF alpha (unclipped),0.9344936785529677
-ECF alpha R2,0.9384609505274407
-Alpha method used,ECF regression (R²=0.938)
-Final alpha estimate,0.9344936785529677
-Stability interpretation,Very heavy-tailed
+Quantile ratio nu_alpha,4.094507944382965
+McCulloch alpha,1.2601496344258425
+Quantile out of range,False
+ECF-McCulloch gap,0.04820260323961034
+Estimators agree,True
+ECF alpha,1.2119470311862321
+ECF alpha R2,0.9769013242757749
+ECF raw slope,1.2119470311862321
+Alpha method used,ECF regression (primary); McCulloch quantile check
+Final alpha estimate,1.2119470311862321
+Stability interpretation,Heavy-tailed
+Agreement interpretation,ECF and McCulloch agree
 Quantile skewness,0.03417234930574723
 Skewness interpretation,Approximately symmetric
