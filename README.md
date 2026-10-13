@@ -22,7 +22,7 @@ OBSERVATION_LABEL = "GOES-15 | 28 October, 2013"   # stamped on every figure
 | 4. SSA | Window length `L = 1.2 × dominant period` (capped at 0.45 N, forced even); Gram matrix `XᵀX` built in chunks from the lagged trajectory matrix; eigendecomposition with `eigh` |
 | 5. Grouping | Component 1 = trend; components 2…L grouped by `floor(log10(λᵢ/λ₁))`; scales below `NOISE_FLOOR_EXPONENT` (default −4) form the noise/residual group |
 | 6. Reconstruction | Diagonal averaging per group; reconstruction is checked against the input (max error ~1e-15) |
-| 7. Noise diagnostics | Mean, std, skewness, excess kurtosis; robust-bandwidth KDE vs Gaussian; Welch spectral slope β (PSD ∝ f^−β); stability index α via ECF regression with a Fama–Roll quantile cross-check |
+| 7. Noise diagnostics | Mean, std, skewness, excess kurtosis; robust-bandwidth KDE vs Gaussian; Welch spectral slope β (PSD ∝ f^−β); stability index α via ECF regression with a McCulloch cross-check |
 | 8. State dependence | Pearson/Spearman correlation (linear and log–log) of every non-noise group against the noise group |
 | 9. Markov time scale | ACF and increment-ACF decorrelation time (|ACF| ≤ 0.10 for 5 consecutive lags) → candidate τ per component |
 | 10. Chapman–Kolmogorov | 30-bin quantile transition matrices; compares the direct 2τ propagator with the τ·τ prediction (KS and L1 distances at the 10th/50th/90th percentile states) |
